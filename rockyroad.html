@@ -96,14 +96,14 @@
     }
     #world-map {
       display: block;
-      width: min(280px, 46vw);
-      height: min(280px, 46vw);
+      width: min(320px, 52vw);
+      height: min(320px, 52vw);
       border-radius: 10px;
     }
     @media (max-height: 700px) {
       #world-map {
-        width: min(220px, 40vw);
-        height: min(220px, 40vw);
+        width: min(240px, 42vw);
+        height: min(240px, 42vw);
       }
     }
 
@@ -438,7 +438,7 @@
   </div>
 
   <div id="world-map-wrap">
-    <canvas id="world-map" width="280" height="280"></canvas>
+    <canvas id="world-map" width="320" height="320"></canvas>
   </div>
 
   <!-- MISSION DISPATCH BAR (Visible in Drive Mode) -->
@@ -1980,17 +1980,45 @@
       return s - Math.floor(s);
     }
 
-    // Home is a 2x2 town. A river runs north-south a few chunks east.
-    // The airport is the next column, two chunks long. Everywhere else
-    // is woods, fields, or farms, plus a few small towns.
+    // Real-map scale: big farm/field belts, forest clumps, rare villages.
+    // Home town stays the 2×2 station block. Airport is farther east so the
+    // kid drives through countryside first. Rivers are sparse corridors.
+    const AIRPORT = { x0: 14, x1: 16, z0: -1, z1: 1 };
+    const REGION = 8; // chunks per macro cell (~288 world units)
+
+    function inAirport(cx, cz) {
+      return cx >= AIRPORT.x0 && cx <= AIRPORT.x1 && cz >= AIRPORT.z0 && cz <= AIRPORT.z1;
+    }
+
+    // One farmyard every 3×3 farm cells so barns are not stacked on every block.
+    function isFarmYard(cx, cz) {
+      return ((cx % 3) + 3) % 3 === 1 && ((cz % 3) + 3) % 3 === 1;
+    }
+
     function biomeAt(cx, cz) {
-      if (cx === 6 && (cz === 0 || cz === 1)) return 'airport';
       if (cx >= 0 && cx <= 1 && cz >= 0 && cz <= 1) return 'town';
-      if ((((cx % 8) + 8) % 8) === 5) return 'river';
-      const h = hash2(Math.floor(cx / 2), Math.floor(cz / 2));
-      if (h < 0.2) return 'town';
-      if (h < 0.46) return 'woods';
-      if (h < 0.7) return 'fields';
+      if (inAirport(cx, cz)) return 'airport';
+
+      const riverCol = ((cx % 18) + 18) % 18;
+      if (riverCol === 11) return 'river';
+
+      const mx = Math.floor(cx / REGION);
+      const mz = Math.floor(cz / REGION);
+      let h = hash2(mx * 1.7, mz * 2.3);
+
+      // Soft borders: near the edge of a macro cell, sometimes take the neighbor.
+      const ex = ((cx % REGION) + REGION) % REGION;
+      const ez = ((cz % REGION) + REGION) % REGION;
+      if (ex <= 1 || ex >= REGION - 2 || ez <= 1 || ez >= REGION - 2) {
+        const nx = mx + (ex <= 1 ? -1 : ex >= REGION - 2 ? 1 : 0);
+        const nz = mz + (ez <= 1 ? -1 : ez >= REGION - 2 ? 1 : 0);
+        if (hash2(cx * 0.37, cz * 0.41) < 0.42) h = hash2(nx * 1.7, nz * 2.3);
+      }
+
+      // Land mix ≈ villages 7% / woods 22% / fields 33% / farm 38%.
+      if (h < 0.07) return 'town';
+      if (h < 0.29) return 'woods';
+      if (h < 0.62) return 'fields';
       return 'farm';
     }
 
@@ -2411,11 +2439,13 @@
       const wx = cx * CHUNK_SIZE;
       const wz = cz * CHUNK_SIZE;
       const pads = [];
-      if (biomeAt(cx, cz) === 'farm') {
+      // Farm vehicles only at spaced yards, not on every crop square.
+      if (biomeAt(cx, cz) === 'farm' && isFarmYard(cx, cz)) {
         pads.push({ kind: 'tractor', x: wx, z: wz + 9 });
         pads.push({ kind: 'harvester', x: wx, z: wz - 9 });
       }
-      if (cx === 6 && cz === 0) pads.push({ kind: 'plane', x: wx, z: wz + 11 });
+      // Plane pad on the middle airport chunk (runway).
+      if (cx === 15 && cz === 0) pads.push({ kind: 'plane', x: wx, z: wz + 11 });
       const svc = serviceAt(cx, cz);
       if (svc === 'fire') {
         pads.push({ kind: 'fire', x: wx, z: wz - 9 });
@@ -2559,23 +2589,39 @@
       });
     }
 
-    function addFarm(chunk, colliders, wx, wz) {
-      addBox(chunk, worldLambert(0xc4a574), -11.5, 0.05, -11.5, 9.5, 0.1, 9.5, { receive: true });
-      addSolid(chunk, colliders, wx, wz, worldLambert(0xd62828), -11.5, 2.4, -11.5, 7.2, 4.8, 7.6);
-      const roof = new THREE.Mesh(propCone, worldLambert(0xfae1dd));
-      roof.scale.set(4.9, 2.3, 5.15);
-      roof.rotation.y = Math.PI / 4;
-      roof.position.set(-11.5, 5.65, -11.5);
-      chunk.add(roof);
-      addBox(chunk, worldLambert(0xf8f9fa), -7.85, 1.25, -11.5, 0.1, 2.3, 1.7);
-      addSilo(chunk, colliders, wx, wz, 11.5, -11.5);
-      addCropRows(chunk, -11.5, 11.5);
-      addCow(chunk, colliders, wx, wz, 10.2, 12.2);
-      placeTree(chunk, colliders, wx, wz, 14.4, 14.4, 0.9);
-      const hayA = addBox(chunk, worldLambert(0xe9c46a), 13.8, 0.55, 9.0, 1.5, 1.1, 1.5, { cast: true });
-      const hayB = addBox(chunk, worldLambert(0xe9c46a), 14.6, 0.45, 10.3, 1.2, 0.9, 1.2);
-      hayA.userData.harvest = 'hay';
-      hayB.userData.harvest = 'hay';
+    // Yard chunks get the barn. Neighbor farm chunks are open cropland.
+    function addFarm(chunk, colliders, wx, wz, cx, cz) {
+      if (isFarmYard(cx, cz)) {
+        addBox(chunk, worldLambert(0xc4a574), -11.5, 0.05, -11.5, 9.5, 0.1, 9.5, { receive: true });
+        addSolid(chunk, colliders, wx, wz, worldLambert(0xd62828), -11.5, 2.4, -11.5, 7.2, 4.8, 7.6);
+        const roof = new THREE.Mesh(propCone, worldLambert(0xfae1dd));
+        roof.scale.set(4.9, 2.3, 5.15);
+        roof.rotation.y = Math.PI / 4;
+        roof.position.set(-11.5, 5.65, -11.5);
+        chunk.add(roof);
+        addBox(chunk, worldLambert(0xf8f9fa), -7.85, 1.25, -11.5, 0.1, 2.3, 1.7);
+        addSilo(chunk, colliders, wx, wz, 11.5, -11.5);
+        addCropRows(chunk, -11.5, 11.5);
+        addCow(chunk, colliders, wx, wz, 10.2, 12.2);
+        placeTree(chunk, colliders, wx, wz, 14.4, 14.4, 0.9);
+        const hayA = addBox(chunk, worldLambert(0xe9c46a), 13.8, 0.55, 9.0, 1.5, 1.1, 1.5, { cast: true });
+        const hayB = addBox(chunk, worldLambert(0xe9c46a), 14.6, 0.45, 10.3, 1.2, 0.9, 1.2);
+        hayA.userData.harvest = 'hay';
+        hayB.userData.harvest = 'hay';
+        return;
+      }
+      // Wide open fields between yards — harvestable, no barn clutter.
+      LOTS.forEach(([qx, qz], i) => {
+        if (i === 3) {
+          placeTree(chunk, colliders, wx, wz, qx, qz, 0.95);
+          return;
+        }
+        addCropRows(chunk, qx, qz);
+      });
+      if (hash2(cx + 0.2, cz + 0.7) > 0.55) {
+        const hay = addBox(chunk, worldLambert(0xe9c46a), 12.5, 0.5, -10.5, 1.4, 1.0, 1.4, { cast: true });
+        hay.userData.harvest = 'hay';
+      }
     }
 
     function addBridgeRails(chunk) {
@@ -2655,33 +2701,34 @@
       chunk.add(sock);
     }
 
-    function addAirport(chunk, colliders, cz, wx, wz) {
+    // Airport spans several chunks. Buildings sit on the corners; runway paint on all.
+    function addAirport(chunk, colliders, cx, cz, wx, wz) {
       for (const side of [-1, 1]) {
         for (const zc of [-12, 12]) {
           addBox(chunk, matWhite, side * 3.65, 0.08, zc, 0.26, 0.03, 10);
         }
       }
-      const south = cz % 2 === 0;
+      const south = cz <= 0;
       for (let i = -3; i <= 3; i++) {
         addBox(chunk, matWhite, i * 0.55, 0.08, south ? -15 : 15, 0.26, 0.03, 1.2);
       }
-      const hx = -11.5;
-      const hz = south ? -11.5 : 11.5;
-      addSolid(chunk, colliders, wx, wz, worldLambert(0x8d99ae), hx, 3.1, hz, 9.2, 6.2, 9.2);
-      addBox(chunk, worldLambert(0x2b2d42), hx + 4.66, 2.15, hz, 0.12, 4.0, 5.8);
-      addBox(chunk, worldLambert(0xe63946), hx, 6.28, hz, 9.3, 0.18, 1.3);
-      if (south) {
+      if (cx === AIRPORT.x0 && cz === AIRPORT.z0) {
+        addSolid(chunk, colliders, wx, wz, worldLambert(0x8d99ae), -11.5, 3.1, -11.5, 9.2, 6.2, 9.2);
+        addBox(chunk, worldLambert(0x2b2d42), -11.5 + 4.66, 2.15, -11.5, 0.12, 4.0, 5.8);
+        addBox(chunk, worldLambert(0xe63946), -11.5, 6.28, -11.5, 9.3, 0.18, 1.3);
+        addParkedPlane(chunk, 11.2, -10.6, 0x3a86ff);
+      } else if (cx === AIRPORT.x1 && cz === AIRPORT.z1) {
         addSolid(chunk, colliders, wx, wz, worldLambert(0xdee2e6), 11.5, 7, 11.5, 3.2, 14, 3.2);
         addBox(chunk, matGlass, 11.5, 13.2, 11.5, 4.0, 2.1, 4.0);
         addBox(chunk, worldLambert(0x495057), 11.5, 14.45, 11.5, 4.4, 0.35, 4.4);
         addBox(chunk, worldLambert(0xadb5bd), 11.5, 16.1, 11.5, 0.18, 2.8, 0.18);
         addBox(chunk, matLamp, 11.5, 17.6, 11.5, 0.4, 0.4, 0.4);
-        addParkedPlane(chunk, 11.2, -10.6, 0x3a86ff);
         addWindsock(chunk, 7.2, 8.4);
-      } else {
+      } else if (cx === AIRPORT.x1 && cz === AIRPORT.z0) {
         addSolid(chunk, colliders, wx, wz, worldLambert(0x4895ef), 11.5, 2.15, -11.5, 8.2, 4.3, 7.0);
         addBox(chunk, matWindow, 11.5 - 4.15, 2.2, -11.5, 0.1, 1.5, 4.8);
         addParkedPlane(chunk, 10.6, 10.4, 0xffbe0b);
+      } else if (cx === 15 && cz === 0) {
         addWindsock(chunk, 7.2, -8.4);
       }
     }
@@ -2771,9 +2818,9 @@
       if (biome === 'town') addTown(chunk, colliders, cx, cz, wx, wz);
       else if (biome === 'woods') addWoods(chunk, colliders, cx, cz, wx, wz);
       else if (biome === 'fields') addFields(chunk, colliders, wx, wz);
-      else if (biome === 'farm') addFarm(chunk, colliders, wx, wz);
+      else if (biome === 'farm') addFarm(chunk, colliders, wx, wz, cx, cz);
       else if (biome === 'river') addRiver(chunk, colliders, cx, cz, wx, wz);
-      else addAirport(chunk, colliders, cz, wx, wz);
+      else addAirport(chunk, colliders, cx, cz, wx, wz);
 
       const rides = mapPadsAt(cx, cz).map(pad => addRidePad(chunk, wx, wz, pad.kind, pad.x - wx, pad.z - wz));
       chunk.userData = { colliders, coinsList, rampsList, trafficList, biome, wx, wz, rides };
@@ -2815,69 +2862,76 @@
       }
     }
 
-    // Paint one map cell. Farms get crop stripes; airport gets a runway + plane mark.
-    function paintMapBiome(ctx, biome, sx, sy, cell) {
+    // Paint one map cell like a kids atlas: big land colors, thin roads, sparse barns.
+    function paintMapBiome(ctx, biome, sx, sy, cell, cx, cz) {
       ctx.fillStyle = MAP_COLORS[biome] || '#888888';
-      ctx.fillRect(sx, sy, cell + 0.5, cell + 0.5);
-      if (biome === 'farm' || biome === 'fields') {
-        ctx.fillStyle = biome === 'farm' ? 'rgba(45, 106, 79, 0.45)' : 'rgba(233, 196, 106, 0.55)';
-        const step = Math.max(2.2, cell * 0.18);
+      ctx.fillRect(sx, sy, cell + 0.6, cell + 0.6);
+      if (biome === 'fields') {
+        ctx.fillStyle = 'rgba(233, 196, 106, 0.5)';
+        const step = Math.max(1.8, cell * 0.2);
         for (let y = sy + 1; y < sy + cell - 1; y += step) {
-          ctx.fillRect(sx + 1, y, cell - 2, Math.max(1.2, step * 0.38));
+          ctx.fillRect(sx + 1, y, cell - 2, Math.max(1, step * 0.42));
         }
-        if (biome === 'farm') {
-          ctx.fillStyle = 'rgba(214, 40, 40, 0.55)';
-          ctx.fillRect(sx + cell * 0.18, sy + cell * 0.18, cell * 0.28, cell * 0.28);
+      } else if (biome === 'farm') {
+        ctx.fillStyle = 'rgba(45, 106, 79, 0.4)';
+        const step = Math.max(1.8, cell * 0.2);
+        for (let y = sy + 1; y < sy + cell - 1; y += step) {
+          ctx.fillRect(sx + 1, y, cell - 2, Math.max(1, step * 0.4));
+        }
+        // Barn only on spaced yards so farm belts look open.
+        if (isFarmYard(cx, cz)) {
+          ctx.fillStyle = '#d62828';
+          ctx.fillRect(sx + cell * 0.22, sy + cell * 0.22, cell * 0.34, cell * 0.34);
+          ctx.fillStyle = '#fae1dd';
+          ctx.fillRect(sx + cell * 0.28, sy + cell * 0.18, cell * 0.22, cell * 0.12);
         }
       } else if (biome === 'woods') {
-        ctx.fillStyle = 'rgba(149, 213, 178, 0.35)';
-        for (let i = 0; i < 3; i++) {
-          const px = sx + cell * (0.25 + (i % 2) * 0.35);
-          const py = sy + cell * (0.28 + Math.floor(i / 2) * 0.35);
+        ctx.fillStyle = 'rgba(149, 213, 178, 0.4)';
+        for (let i = 0; i < 4; i++) {
+          const px = sx + cell * (0.22 + (i % 2) * 0.4);
+          const py = sy + cell * (0.24 + Math.floor(i / 2) * 0.38);
           ctx.beginPath();
-          ctx.arc(px, py, Math.max(1.4, cell * 0.1), 0, Math.PI * 2);
+          ctx.arc(px, py, Math.max(1.2, cell * 0.12), 0, Math.PI * 2);
           ctx.fill();
         }
+      } else if (biome === 'town') {
+        ctx.fillStyle = 'rgba(255,255,255,0.22)';
+        ctx.fillRect(sx + cell * 0.2, sy + cell * 0.2, cell * 0.28, cell * 0.28);
+        ctx.fillRect(sx + cell * 0.55, sy + cell * 0.48, cell * 0.26, cell * 0.3);
       } else if (biome === 'airport') {
-        // Concrete apron + bold runway so kids spot it from far away.
         ctx.fillStyle = '#adb5bd';
-        ctx.fillRect(sx + 1, sy + 1, cell - 2, cell - 2);
+        ctx.fillRect(sx + 0.5, sy + 0.5, cell - 1, cell - 1);
         ctx.fillStyle = '#ffffff';
-        const rw = Math.max(2.5, cell * 0.16);
-        ctx.fillRect(sx + (cell - rw) / 2, sy + 2, rw, cell - 4);
+        const rw = Math.max(2.2, cell * 0.2);
+        ctx.fillRect(sx + (cell - rw) / 2, sy + 1, rw, cell - 2);
         ctx.fillStyle = '#ffbe0b';
-        ctx.fillRect(sx + cell * 0.28, sy + 2, cell * 0.44, Math.max(1.5, cell * 0.08));
-        ctx.fillRect(sx + cell * 0.28, sy + cell - 2 - Math.max(1.5, cell * 0.08), cell * 0.44, Math.max(1.5, cell * 0.08));
-        ctx.fillStyle = '#3a86ff';
-        const cx = sx + cell * 0.72;
-        const cy = sy + cell * 0.55;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - cell * 0.18);
-        ctx.lineTo(cx + cell * 0.12, cy);
-        ctx.lineTo(cx, cy + cell * 0.18);
-        ctx.lineTo(cx - cell * 0.1, cy);
-        ctx.closePath();
-        ctx.fill();
-        if (cell >= 12) {
-          ctx.font = `bold ${Math.max(9, Math.floor(cell * 0.42))}px Fredoka, sans-serif`;
+        const barH = Math.max(1.2, cell * 0.1);
+        ctx.fillRect(sx + cell * 0.22, sy + 1, cell * 0.56, barH);
+        ctx.fillRect(sx + cell * 0.22, sy + cell - 1 - barH, cell * 0.56, barH);
+        if (cx === 15 && cz === 0) {
+          ctx.font = `bold ${Math.max(8, Math.floor(cell * 0.55))}px Fredoka, sans-serif`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.lineWidth = 3;
+          ctx.lineWidth = 2.5;
           ctx.strokeStyle = '#073b4c';
-          ctx.strokeText('✈', sx + cell * 0.32, sy + cell * 0.55);
+          ctx.strokeText('✈', sx + cell * 0.5, sy + cell * 0.5);
           ctx.fillStyle = '#ffffff';
-          ctx.fillText('✈', sx + cell * 0.32, sy + cell * 0.55);
+          ctx.fillText('✈', sx + cell * 0.5, sy + cell * 0.5);
         }
       } else if (biome === 'river') {
-        ctx.fillStyle = 'rgba(255,255,255,0.28)';
-        ctx.fillRect(sx + cell * 0.35, sy + 1, Math.max(2, cell * 0.3), cell - 2);
+        ctx.fillStyle = '#56cfe1';
+        ctx.fillRect(sx + cell * 0.28, sy, Math.max(2, cell * 0.44), cell);
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.fillRect(sx + cell * 0.4, sy + 1, Math.max(1, cell * 0.16), cell - 2);
       }
 
-      // Road cross on every cell (lighter on airport so runway stays boss).
-      ctx.fillStyle = biome === 'airport' ? 'rgba(27, 29, 42, 0.35)' : 'rgba(27, 29, 42, 0.88)';
-      const roadW = Math.max(2, cell * (biome === 'airport' ? 0.1 : 0.16));
-      ctx.fillRect(sx + (cell - roadW) / 2, sy, roadW, cell);
-      ctx.fillRect(sx, sy + (cell - roadW) / 2, cell, roadW);
+      // Thin road grid — land color stays the star of the map.
+      if (biome !== 'river') {
+        ctx.fillStyle = biome === 'airport' ? 'rgba(27, 29, 42, 0.25)' : 'rgba(27, 29, 42, 0.55)';
+        const roadW = Math.max(1.2, cell * 0.09);
+        ctx.fillRect(sx + (cell - roadW) / 2, sy, roadW, cell);
+        ctx.fillRect(sx, sy + (cell - roadW) / 2, cell, roadW);
+      }
     }
 
     // North is up. Screen +x is world +X. The nose tick uses heading(), the same vector the car drives with.
@@ -2885,9 +2939,9 @@
       const canvas = document.getElementById('world-map');
       if (!mapCtx) mapCtx = canvas.getContext('2d');
       const ctx = mapCtx;
-      // Wider view so countryside farms and the east airport stay on screen.
-      const cells = 19;
-      const half = 9;
+      // Wide atlas view: big farm belts + the distant airport stay readable.
+      const cells = 27;
+      const half = 13;
       const size = canvas.width;
       const cell = size / cells;
       const idx = chunkIndexAt(carX, carZ);
@@ -2895,10 +2949,12 @@
       let airportOnMap = false;
       for (let dz = -half; dz <= half; dz++) {
         for (let dx = -half; dx <= half; dx++) {
-          const biome = biomeAt(idx.cx + dx, idx.cz + dz);
+          const ccx = idx.cx + dx;
+          const ccz = idx.cz + dz;
+          const biome = biomeAt(ccx, ccz);
           const sx = (dx + half) * cell;
           const sy = (half - dz) * cell;
-          paintMapBiome(ctx, biome, sx, sy, cell);
+          paintMapBiome(ctx, biome, sx, sy, cell, ccx, ccz);
           if (biome === 'airport') airportOnMap = true;
         }
       }
@@ -2907,15 +2963,15 @@
       const py = playerPx.y;
       drawMapMarkers(ctx, idx, half, cell);
       const aim = heading(car.angle);
-      const noseLen = Math.max(10, cell * 0.85);
+      const noseLen = Math.max(9, cell * 0.9);
       ctx.strokeStyle = '#ff006e';
-      ctx.lineWidth = Math.max(2.5, cell * 0.18);
+      ctx.lineWidth = Math.max(2.2, cell * 0.2);
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(px, py);
       ctx.lineTo(px + aim.fwdX * noseLen, py - aim.fwdZ * noseLen);
       ctx.stroke();
-      const dotR = Math.max(4.5, cell * 0.28);
+      const dotR = Math.max(4, cell * 0.32);
       ctx.fillStyle = '#ffbe0b';
       ctx.beginPath();
       ctx.arc(px, py, dotR, 0, Math.PI * 2);
@@ -3041,11 +3097,24 @@
         for (let dx = -half; dx <= half; dx++) {
           const pads = mapPadsAt(idx.cx + dx, idx.cz + dz);
           for (let i = 0; i < pads.length; i++) {
+            const kind = pads[i].kind;
             const p = mapPixel(pads[i].x, pads[i].z, idx, half, cell);
-            ctx.fillStyle = PAD_MAP_COLOR[pads[i].kind] || '#ffffff';
+            const big = kind === 'plane' || kind === 'tractor' || kind === 'harvester';
+            const r = Math.max(big ? 3.8 : 2.8, cell * (big ? 0.22 : 0.16));
+            ctx.fillStyle = PAD_MAP_COLOR[kind] || '#ffffff';
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 2.6, 0, Math.PI * 2);
+            ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
             ctx.fill();
+            ctx.lineWidth = 1.4;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+            if (kind === 'plane' && cell >= 10) {
+              ctx.font = `bold ${Math.max(8, Math.floor(cell * 0.35))}px Fredoka, sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillStyle = '#073b4c';
+              ctx.fillText('✈', p.x, p.y + 0.5);
+            }
           }
         }
       }
