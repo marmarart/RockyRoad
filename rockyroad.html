@@ -88,17 +88,23 @@
       z-index: 20;
       display: none;
       pointer-events: none;
-      background: rgba(7, 20, 40, 0.88);
+      background: rgba(7, 20, 40, 0.9);
       border: 3px solid #fff;
       border-radius: 16px;
-      padding: 5px;
+      padding: 6px;
       box-shadow: 0 6px 0 rgba(0,0,0,0.35);
     }
     #world-map {
       display: block;
-      width: 169px;
-      height: 169px;
+      width: min(280px, 46vw);
+      height: min(280px, 46vw);
       border-radius: 10px;
+    }
+    @media (max-height: 700px) {
+      #world-map {
+        width: min(220px, 40vw);
+        height: min(220px, 40vw);
+      }
     }
 
     /* 3D Arcade Buttons */
@@ -432,7 +438,7 @@
   </div>
 
   <div id="world-map-wrap">
-    <canvas id="world-map" width="169" height="169"></canvas>
+    <canvas id="world-map" width="280" height="280"></canvas>
   </div>
 
   <!-- MISSION DISPATCH BAR (Visible in Drive Mode) -->
@@ -2776,12 +2782,12 @@
     }
 
     const MAP_COLORS = {
-      town: '#cbd5e1',
+      town: '#94a3b8',
       woods: '#1b4332',
-      fields: '#c3e6a0',
-      farm: '#e7c08a',
+      fields: '#74c69d',
+      farm: '#e9c46a',
       river: '#48bfe3',
-      airport: '#edf2f4'
+      airport: '#8d99ae'
     };
     const BIOME_LABELS = {
       town: ['🏙️ TOWN', '#4cc9f0'],
@@ -2809,32 +2815,91 @@
       }
     }
 
+    // Paint one map cell. Farms get crop stripes; airport gets a runway + plane mark.
+    function paintMapBiome(ctx, biome, sx, sy, cell) {
+      ctx.fillStyle = MAP_COLORS[biome] || '#888888';
+      ctx.fillRect(sx, sy, cell + 0.5, cell + 0.5);
+      if (biome === 'farm' || biome === 'fields') {
+        ctx.fillStyle = biome === 'farm' ? 'rgba(45, 106, 79, 0.45)' : 'rgba(233, 196, 106, 0.55)';
+        const step = Math.max(2.2, cell * 0.18);
+        for (let y = sy + 1; y < sy + cell - 1; y += step) {
+          ctx.fillRect(sx + 1, y, cell - 2, Math.max(1.2, step * 0.38));
+        }
+        if (biome === 'farm') {
+          ctx.fillStyle = 'rgba(214, 40, 40, 0.55)';
+          ctx.fillRect(sx + cell * 0.18, sy + cell * 0.18, cell * 0.28, cell * 0.28);
+        }
+      } else if (biome === 'woods') {
+        ctx.fillStyle = 'rgba(149, 213, 178, 0.35)';
+        for (let i = 0; i < 3; i++) {
+          const px = sx + cell * (0.25 + (i % 2) * 0.35);
+          const py = sy + cell * (0.28 + Math.floor(i / 2) * 0.35);
+          ctx.beginPath();
+          ctx.arc(px, py, Math.max(1.4, cell * 0.1), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else if (biome === 'airport') {
+        // Concrete apron + bold runway so kids spot it from far away.
+        ctx.fillStyle = '#adb5bd';
+        ctx.fillRect(sx + 1, sy + 1, cell - 2, cell - 2);
+        ctx.fillStyle = '#ffffff';
+        const rw = Math.max(2.5, cell * 0.16);
+        ctx.fillRect(sx + (cell - rw) / 2, sy + 2, rw, cell - 4);
+        ctx.fillStyle = '#ffbe0b';
+        ctx.fillRect(sx + cell * 0.28, sy + 2, cell * 0.44, Math.max(1.5, cell * 0.08));
+        ctx.fillRect(sx + cell * 0.28, sy + cell - 2 - Math.max(1.5, cell * 0.08), cell * 0.44, Math.max(1.5, cell * 0.08));
+        ctx.fillStyle = '#3a86ff';
+        const cx = sx + cell * 0.72;
+        const cy = sy + cell * 0.55;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - cell * 0.18);
+        ctx.lineTo(cx + cell * 0.12, cy);
+        ctx.lineTo(cx, cy + cell * 0.18);
+        ctx.lineTo(cx - cell * 0.1, cy);
+        ctx.closePath();
+        ctx.fill();
+        if (cell >= 12) {
+          ctx.font = `bold ${Math.max(9, Math.floor(cell * 0.42))}px Fredoka, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = '#073b4c';
+          ctx.strokeText('✈', sx + cell * 0.32, sy + cell * 0.55);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText('✈', sx + cell * 0.32, sy + cell * 0.55);
+        }
+      } else if (biome === 'river') {
+        ctx.fillStyle = 'rgba(255,255,255,0.28)';
+        ctx.fillRect(sx + cell * 0.35, sy + 1, Math.max(2, cell * 0.3), cell - 2);
+      }
+
+      // Road cross on every cell (lighter on airport so runway stays boss).
+      ctx.fillStyle = biome === 'airport' ? 'rgba(27, 29, 42, 0.35)' : 'rgba(27, 29, 42, 0.88)';
+      const roadW = Math.max(2, cell * (biome === 'airport' ? 0.1 : 0.16));
+      ctx.fillRect(sx + (cell - roadW) / 2, sy, roadW, cell);
+      ctx.fillRect(sx, sy + (cell - roadW) / 2, cell, roadW);
+    }
+
     // North is up. Screen +x is world +X. The nose tick uses heading(), the same vector the car drives with.
     function drawWorldMap(carX, carZ) {
       const canvas = document.getElementById('world-map');
       if (!mapCtx) mapCtx = canvas.getContext('2d');
       const ctx = mapCtx;
-      const cells = 13;
-      const half = 6;
+      // Wider view so countryside farms and the east airport stay on screen.
+      const cells = 19;
+      const half = 9;
       const size = canvas.width;
       const cell = size / cells;
       const idx = chunkIndexAt(carX, carZ);
       ctx.clearRect(0, 0, size, size);
+      let airportOnMap = false;
       for (let dz = -half; dz <= half; dz++) {
         for (let dx = -half; dx <= half; dx++) {
           const biome = biomeAt(idx.cx + dx, idx.cz + dz);
           const sx = (dx + half) * cell;
           const sy = (half - dz) * cell;
-          ctx.fillStyle = MAP_COLORS[biome] || '#888888';
-          ctx.fillRect(sx, sy, cell + 0.5, cell + 0.5);
-          ctx.fillStyle = 'rgba(27, 29, 42, 0.92)';
-          const rw = Math.max(2, cell * 0.18);
-          ctx.fillRect(sx + (cell - rw) / 2, sy, rw, cell);
-          ctx.fillRect(sx, sy + (cell - rw) / 2, cell, rw);
-          if (biome === 'airport') {
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(sx + cell * 0.46, sy + 1, Math.max(1, cell * 0.08), cell - 2);
-          }
+          paintMapBiome(ctx, biome, sx, sy, cell);
+          if (biome === 'airport') airportOnMap = true;
         }
       }
       const playerPx = mapPixel(carX, carZ, idx, half, cell);
@@ -2842,27 +2907,40 @@
       const py = playerPx.y;
       drawMapMarkers(ctx, idx, half, cell);
       const aim = heading(car.angle);
+      const noseLen = Math.max(10, cell * 0.85);
       ctx.strokeStyle = '#ff006e';
-      ctx.lineWidth = 3;
+      ctx.lineWidth = Math.max(2.5, cell * 0.18);
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(px, py);
-      ctx.lineTo(px + aim.fwdX * 11, py - aim.fwdZ * 11);
+      ctx.lineTo(px + aim.fwdX * noseLen, py - aim.fwdZ * noseLen);
       ctx.stroke();
+      const dotR = Math.max(4.5, cell * 0.28);
       ctx.fillStyle = '#ffbe0b';
       ctx.beginPath();
-      ctx.arc(px, py, 4.2, 0, Math.PI * 2);
+      ctx.arc(px, py, dotR, 0, Math.PI * 2);
       ctx.fill();
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 2;
       ctx.strokeStyle = '#ffffff';
       ctx.stroke();
-      ctx.font = 'bold 11px Fredoka, sans-serif';
+      ctx.font = 'bold 13px Fredoka, sans-serif';
       ctx.textAlign = 'center';
+      ctx.textBaseline = 'alphabetic';
       ctx.lineWidth = 3;
       ctx.strokeStyle = '#073b4c';
-      ctx.strokeText('N', size / 2, 11);
+      ctx.strokeText('N', size / 2, 14);
       ctx.fillStyle = '#ffffff';
-      ctx.fillText('N', size / 2, 11);
+      ctx.fillText('N', size / 2, 14);
+      if (airportOnMap) {
+        ctx.font = 'bold 11px Fredoka, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#073b4c';
+        ctx.strokeText('✈ airport', 8, size - 8);
+        ctx.fillStyle = '#ffd166';
+        ctx.fillText('✈ airport', 8, size - 8);
+        ctx.textAlign = 'center';
+      }
     }
 
     function updateWorldChunks(carX, carZ) {
