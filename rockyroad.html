@@ -2002,6 +2002,11 @@
       const riverCol = ((cx % 18) + 18) % 18;
       if (riverCol === 11) return 'river';
 
+      // Green belt around home: fields/farm first, no extra towns stuck to spawn.
+      if (cx >= -2 && cx <= 4 && cz >= -2 && cz <= 4) {
+        return hash2(cx + 3.1, cz + 5.7) < 0.48 ? 'fields' : 'farm';
+      }
+
       const mx = Math.floor(cx / REGION);
       const mz = Math.floor(cz / REGION);
       let h = hash2(mx * 1.7, mz * 2.3);
@@ -2060,6 +2065,9 @@
     const propCyl = new THREE.CylinderGeometry(1, 1, 1, 12);
     const padRingGeo = new THREE.RingGeometry(1.5, 2.15, 22);
     padRingGeo.rotateX(-Math.PI / 2);
+    // Bigger bright ring so the plane pad is obvious on the grey runway.
+    const planePadRingGeo = new THREE.RingGeometry(2.4, 3.6, 28);
+    planePadRingGeo.rotateX(-Math.PI / 2);
     const padMatCache = new Map();
     function padMat(hex) {
       let mat = padMatCache.get(hex);
@@ -2444,8 +2452,11 @@
         pads.push({ kind: 'tractor', x: wx, z: wz + 9 });
         pads.push({ kind: 'harvester', x: wx, z: wz - 9 });
       }
-      // Plane pad on the middle airport chunk (runway).
-      if (cx === 15 && cz === 0) pads.push({ kind: 'plane', x: wx, z: wz + 11 });
+      // Plane pads on the middle runway chunk — center of the cross is easiest.
+      if (cx === 15 && cz === 0) {
+        pads.push({ kind: 'plane', x: wx, z: wz });
+        pads.push({ kind: 'plane', x: wx, z: wz + 12 });
+      }
       const svc = serviceAt(cx, cz);
       if (svc === 'fire') {
         pads.push({ kind: 'fire', x: wx, z: wz - 9 });
@@ -2855,7 +2866,10 @@
       if (biome === 'airport') {
         if (!seenAirport) {
           seenAirport = true;
-          showBanner('✈️ You found the AIRPORT!');
+          showBanner('✈️ AIRPORT! Stop on the big yellow �biome === 'airport') {
+        if (!seenAirport) {
+          seenAirport = true;
+          showBanner('✈️ AIRPORT! Stop on the big yellow ✈ pad, then tap Plane!');
         }
       } else {
         seenAirport = false;
@@ -3045,7 +3059,7 @@
     const RIDE_PAD = {
       tractor: { emoji: '🚜', label: 'Tractor', color: 0x38b000 },
       harvester: { emoji: '🌾', label: 'Harvester', color: 0xffbe0b },
-      plane: { emoji: '✈️', label: 'Plane', color: 0xffffff },
+      plane: { emoji: '✈️', label: 'Plane', color: 0xffbe0b },
       police: { emoji: '🚓', label: 'Police', color: 0x4cc9f0 },
       fire: { emoji: '🚒', label: 'Fire Truck', color: 0xe63946 },
       ambulance: { emoji: '🚑', label: '911 Van', color: 0xff4d6d },
@@ -3053,7 +3067,7 @@
       truck: { emoji: '🚚', label: 'Groceries', color: 0xbc6c25 }
     };
     const PAD_MAP_COLOR = {
-      tractor: '#38b000', harvester: '#ffbe0b', plane: '#ffffff',
+      tractor: '#38b000', harvester: '#ffbe0b', plane: '#ffbe0b',
       police: '#4cc9f0', fire: '#e63946', ambulance: '#ff4d6d',
       pizza: '#fb5607', truck: '#bc6c25'
     };
@@ -3150,17 +3164,37 @@
       const info = RIDE_PAD[kind];
       const g = new THREE.Group();
       g.position.set(x, 0.12, z);
-      g.add(new THREE.Mesh(padRingGeo, padMat(info.color)));
+      const isPlane = kind === 'plane';
+      const ring = new THREE.Mesh(isPlane ? planePadRingGeo : padRingGeo, padMat(info.color));
+      g.add(ring);
+      if (isPlane) {
+        // Second glowing disc + beacon so kids cannot miss it on concrete.
+        const disc = new THREE.Mesh(
+          new THREE.CircleGeometry(2.2, 24),
+          new THREE.MeshBasicMaterial({ color: 0xffbe0b, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+        );
+        disc.rotation.x = -Math.PI / 2;
+        disc.position.y = 0.02;
+        g.add(disc);
+        const beacon = new THREE.Mesh(
+          propCone,
+          new THREE.MeshBasicMaterial({ color: 0x3a86ff })
+        );
+        beacon.scale.set(0.55, 1.4, 0.55);
+        beacon.position.set(0, 3.2, 0);
+        g.add(beacon);
+        g.userData.planeBeacon = beacon;
+      }
       const onNS = Math.abs(x) < Math.abs(z);
-      const poleX = onNS ? 5.2 : 0;
-      const poleZ = onNS ? 0 : 5.2;
-      addBox(g, worldLambert(info.color), poleX, 2.3, poleZ, 0.32, 4.4, 0.32);
+      const poleX = onNS ? (isPlane ? 6.2 : 5.2) : 0;
+      const poleZ = onNS ? 0 : (isPlane ? 6.2 : 5.2);
+      addBox(g, worldLambert(info.color), poleX, isPlane ? 3.0 : 2.3, poleZ, 0.36, isPlane ? 5.8 : 4.4, 0.36);
       const bulb = new THREE.Mesh(cubeGeo, padMat(info.color));
-      bulb.scale.set(0.75, 0.75, 0.75);
-      bulb.position.set(poleX, 4.7, poleZ);
+      bulb.scale.set(isPlane ? 1.15 : 0.75, isPlane ? 1.15 : 0.75, isPlane ? 1.15 : 0.75);
+      bulb.position.set(poleX, isPlane ? 6.2 : 4.7, poleZ);
       g.add(bulb);
       chunk.add(g);
-      return { kind, wx: wx + x, wz: wz + z, mesh: g, bulb };
+      return { kind, wx: wx + x, wz: wz + z, mesh: g, bulb, boardR: isPlane ? 7.2 : 4.2 };
     }
 
     function addRideWheels(g, spots) {
@@ -3481,22 +3515,27 @@
         return;
       }
       // Re-check the pad here. The HUD nearPad can be a frame behind after a stop.
-      if (Math.hypot(car.vx, car.vz) >= 6) return;
       nearPad = nearestPad();
-      if (nearPad) boardRide(nearPad.kind);
+      if (!nearPad) return;
+      const speed = Math.hypot(car.vx, car.vz);
+      const maxSpeed = nearPad.kind === 'plane' ? 10 : 6;
+      if (speed >= maxSpeed) return;
+      boardRide(nearPad.kind);
     }
 
     function nearestPad() {
       let best = null;
-      let bestD = 4.2;
+      let bestD = Infinity;
       for (const ch of chunks.values()) {
         const rides = ch.userData.rides;
         if (!rides) continue;
         for (let i = 0; i < rides.length; i++) {
-          const d = Math.hypot(car.x - rides[i].wx, car.z - rides[i].wz);
-          if (d < bestD) {
+          const ride = rides[i];
+          const maxD = ride.boardR || 4.2;
+          const d = Math.hypot(car.x - ride.wx, car.z - ride.wz);
+          if (d < maxD && d < bestD) {
             bestD = d;
-            best = rides[i];
+            best = ride;
           }
         }
       }
@@ -3512,7 +3551,11 @@
         btn.innerText = '🚗 My Car';
         return;
       }
-      nearPad = Math.hypot(car.vx, car.vz) < 6 ? nearestPad() : null;
+      // Plane pad allows a slightly faster roll-up so kids do not miss the button.
+      const speed = Math.hypot(car.vx, car.vz);
+      const pad = nearestPad();
+      const speedOk = pad && pad.kind === 'plane' ? speed < 10 : speed < 6;
+      nearPad = speedOk ? pad : null;
       if (!nearPad) {
         btn.style.display = 'none';
         return;
@@ -3579,8 +3622,14 @@
         const rides = ch.userData.rides;
         if (!rides) continue;
         for (let i = 0; i < rides.length; i++) {
-          const s = 0.7 + Math.sin(elapsed * 4 + rides[i].wx * 0.1) * 0.12;
-          rides[i].bulb.scale.setScalar(s);
+          const ride = rides[i];
+          const pulse = ride.kind === 'plane' ? 5.5 : 4;
+          const s = (ride.kind === 'plane' ? 1.05 : 0.7) + Math.sin(elapsed * pulse + ride.wx * 0.1) * (ride.kind === 'plane' ? 0.22 : 0.12);
+          ride.bulb.scale.setScalar(s);
+          if (ride.mesh && ride.mesh.userData.planeBeacon) {
+            ride.mesh.userData.planeBeacon.position.y = 3.0 + Math.sin(elapsed * 4) * 0.35;
+            ride.mesh.userData.planeBeacon.rotation.y = elapsed * 2;
+          }
         }
       }
     }
